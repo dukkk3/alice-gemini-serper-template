@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_MESSAGE_CHARS = 1200;
@@ -193,7 +195,37 @@ function errorForUser(error) {
   }
 }
 
+function requestToken(req) {
+  const fromQuery = req.query?.token;
+  if (typeof fromQuery === "string") return fromQuery;
+  if (Array.isArray(fromQuery) && typeof fromQuery[0] === "string") return fromQuery[0];
+
+  try {
+    return new URL(req.url || "", "http://localhost").searchParams.get("token") || "";
+  } catch {
+    return "";
+  }
+}
+
+function authorized(req) {
+  const expected = String(process.env.WEBHOOK_SECRET || "");
+  const provided = requestToken(req);
+  if (!expected || !provided) return false;
+
+  const actual = Buffer.from(provided);
+  const wanted = Buffer.from(expected);
+  if (actual.length !== wanted.length) return false;
+  return timingSafeEqual(actual, wanted);
+}
+
 export default async function handler(req, res) {
+  if (!authorized(req)) {
+    if (!process.env.WEBHOOK_SECRET) {
+      console.error("WEBHOOK_SECRET is not set; rejecting the request.");
+    }
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,

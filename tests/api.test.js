@@ -31,33 +31,50 @@ test("history filters malformed messages and keeps last 8", () => {
   assert.equal(result[7].text, "11");
 });
 
-test("GET health check returns an ok response", async () => {
-  const handler = (await import("../api/index.js")).default;
+function mockResponse() {
   let statusCode = 200;
   let payload;
-  const res = {
+  return {
     status(code) { statusCode = code; return this; },
     json(value) { payload = value; return value; },
-    setHeader() {}
+    setHeader() {},
+    get statusCode() { return statusCode; },
+    get payload() { return payload; }
   };
-  await handler({ method: "GET" }, res);
-  assert.equal(statusCode, 200);
-  assert.equal(payload.ok, true);
-  assert.equal(payload.service, "alice-aitunnel-serper");
+}
+
+test("GET health check returns an ok response", async () => {
+  process.env.WEBHOOK_SECRET = "test-secret";
+  const handler = (await import("../api/index.js")).default;
+  const res = mockResponse();
+  await handler({ method: "GET", query: { token: "test-secret" } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.ok, true);
+  assert.equal(res.payload.service, "alice-aitunnel-serper");
+});
+
+test("requests without the webhook token are rejected", async () => {
+  process.env.WEBHOOK_SECRET = "test-secret";
+  const handler = (await import("../api/index.js")).default;
+  const missing = mockResponse();
+  const wrong = mockResponse();
+  await handler({ method: "POST", query: {}, body: { request: { command: "привет" } } }, missing);
+  await handler({ method: "GET", url: "/api?token=other-secret" }, wrong);
+  assert.equal(missing.statusCode, 401);
+  assert.equal(wrong.statusCode, 401);
 });
 
 test("launch request returns a valid Alice greeting without external API keys", async () => {
+  process.env.WEBHOOK_SECRET = "test-secret";
   const handler = (await import("../api/index.js")).default;
-  let statusCode = 200;
-  let payload;
-  const res = {
-    status(code) { statusCode = code; return this; },
-    json(value) { payload = value; return value; },
-    setHeader() {}
-  };
-  await handler({ method: "POST", body: { request: { command: "" }, state: { session: { history: [] } } } }, res);
-  assert.equal(statusCode, 200);
-  assert.equal(payload.version, "1.0");
-  assert.match(payload.response.text, /Привет/);
-  assert.equal(payload.response.end_session, false);
+  const res = mockResponse();
+  await handler({
+    method: "POST",
+    url: "/api?token=test-secret",
+    body: { request: { command: "" }, state: { session: { history: [] } } }
+  }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.payload.version, "1.0");
+  assert.match(res.payload.response.text, /Привет/);
+  assert.equal(res.payload.response.end_session, false);
 });
